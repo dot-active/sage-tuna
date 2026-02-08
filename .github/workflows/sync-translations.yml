@@ -1,0 +1,89 @@
+name: Sync Translations and Update Files
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'en/*.txt'
+      - 'cn/*.txt'
+      - 'tw/*.txt'
+  workflow_dispatch:
+
+jobs:
+  sync-and-update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install opencc-js
+
+      - name: Ensure tw directory exists
+        run: mkdir -p tw
+
+      - name: Convert all CN to TW
+        run: |
+          node - <<'EOF'
+          const OpenCC = require('opencc-js');
+          const fs = require('fs');
+          const path = require('path');
+
+          const converter = OpenCC.Converter({ from: 'cn', to: 'tw' });
+          const cnDir = 'cn';
+          const twDir = 'tw';
+
+          // Ensure tw directory exists
+          if (!fs.existsSync(twDir)) {
+            fs.mkdirSync(twDir, { recursive: true });
+          }
+
+          // Get all .txt files from cn directory
+          const files = fs.readdirSync(cnDir).filter(f => f.endsWith('.txt'));
+
+          console.log(`Found ${files.length} .txt files in ${cnDir}/`);
+
+          files.forEach(filename => {
+            try {
+              const inputPath = path.join(cnDir, filename);
+              const content = fs.readFileSync(inputPath, 'utf8');
+
+              // Convert both filename and content
+              const translatedFilename = converter(filename);
+              const converted = converter(content);
+
+              const outputPath = path.join(twDir, translatedFilename);
+              fs.writeFileSync(outputPath, converted, 'utf8');
+
+              console.log(`✓ Converted: ${filename} -> ${translatedFilename}`);
+            } catch (error) {
+              console.error(`✗ Error converting ${filename}:`, error.message);
+              process.exit(1);
+            }
+          });
+
+          console.log(`\nSuccessfully converted ${files.length} files from CN to TW`);
+          EOF
+
+      - name: Update files.json for both folders
+        run: node scripts/update-files-json.js
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "rudy"
+          git config --global user.email "treble_l@hotmail.com"
+          git add tw/*.txt en/files.json cn/files.json tw/files.json
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-sync: Update translations and files.json" --quiet
+            git pull --rebase origin main
+            git push origin main
+          else
+            echo "No changes to commit"
+          fi
